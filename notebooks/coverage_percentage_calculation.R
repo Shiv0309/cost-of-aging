@@ -9,8 +9,7 @@
 # columns are only comparable when there is exactly one dispense.
 
 # ---- Settings ---------------------------------------------------------------
-# Reads straight from GitHub. If you cloned the repo, point this at the local
-# folder instead, e.g. "growing-cost-of-care/data/synthea_sample_data_csv_latest"
+# Reads straight from GitHub. 
 data_dir <- "C:/Users/ktchi/Downloads/growing-cost-of-care/data/synthea_sample_data_csv_latest"
 out_dir  <- "."
 
@@ -68,3 +67,50 @@ preview <- head(medication_level, 15)
 preview$medication <- substr(preview$medication, 1, 50)   # console preview only
 print(preview[, c("medication", "n_records", "n_patients", "pct_covered")],
       row.names = FALSE, digits = 4)
+
+# ---- 3. Median costs and each patient's contribution ------------------------
+total_cost_all <- sum(single$TOTALCOST)
+by_pat <- split(single, single$PATIENT)
+patient_level <- do.call(rbind, lapply(names(by_pat), function(id) {
+  d <- by_pat[[id]]
+  data.frame(
+    patient_id     = id,
+    n_records      = nrow(d),
+    total_cost     = sum(d$TOTALCOST),
+    payer_coverage = sum(d$PAYER_COVERAGE),
+    pct_covered    = 100 * sum(d$PAYER_COVERAGE) / sum(d$TOTALCOST),  # patient's own rate
+    stringsAsFactors = FALSE
+  )
+}))
+patient_level$pct_of_records <- 100 * patient_level$n_records / nrow(single)
+patient_level$pct_of_cost    <- 100 * patient_level$total_cost / total_cost_all
+# Contribution in percentage points: these add up to the overall percent covered
+patient_level$contribution_pts <- 100 * patient_level$payer_coverage / total_cost_all
+patient_level <- patient_level[order(-patient_level$contribution_pts), ]
+patient_level$cumulative_pts <- cumsum(patient_level$contribution_pts)
+rownames(patient_level) <- NULL
+
+write.csv(patient_level, file.path(out_dir, "single_dispense_patient_contribution.csv"),
+          row.names = FALSE)
+
+cat("\n---- Median costs (single-dispense) ----\n")
+cat(sprintf("Median cost per record:               $%.2f\n", median(single$TOTALCOST)))
+cat(sprintf("Median total cost per patient:        $%.2f\n", median(patient_level$total_cost)))
+cat(sprintf("Median per-patient percent covered:   %.1f%%\n", median(patient_level$pct_covered)))
+
+cat("\n---- Patient contribution to the overall percent ----\n")
+cat(sprintf("Overall percent covered: %.1f%% = sum of every patient's contribution (%.1f pts)\n",
+            overall, sum(patient_level$contribution_pts)))
+top <- patient_level[1, ]
+rest <- patient_level[-1, ]
+cat(sprintf("Largest patient: %.0f%% of records, %.0f%% of cost, contributes %.1f of %.1f pts\n",
+            top$pct_of_records, top$pct_of_cost, top$contribution_pts, overall))
+cat(sprintf("Overall percent without that patient: %.1f%%\n",
+            100 * sum(rest$payer_coverage) / sum(rest$total_cost)))
+cat(sprintf("Top 5 patients contribute %.1f of %.1f pts\n\n",
+            patient_level$cumulative_pts[5], overall))
+pv <- head(patient_level, 10)
+pv$patient_id <- substr(pv$patient_id, 1, 8)    # shortened for the console only
+print(pv[, c("patient_id", "n_records", "total_cost", "pct_covered",
+             "pct_of_cost", "contribution_pts", "cumulative_pts")],
+      row.names = FALSE, digits = 3)
