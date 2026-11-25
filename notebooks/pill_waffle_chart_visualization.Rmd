@@ -1,6 +1,6 @@
 ---
-title: "Untitled"
-author: "Kaitlyn Chihaoui & Shiva Palpanoori"
+title: "Waffle Chart Visualization"
+author: "Kaitlyn Chihaoui"
 date: "2026-11-25"
 output: html_document
 ---
