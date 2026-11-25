@@ -1,0 +1,99 @@
+---
+title: "Untitled"
+author: "Kaitlyn Chihaoui & Shiva Palpanoori"
+date: "2026-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## Waffle chart of pill icons: 5 x 20 grid, 3.7% filled
+# Requires: ggplot2   (install.packages("ggplot2"))
+
+library(ggplot2)
+
+# ---- Settings ---------------------------------------------------------------
+pct <- 56                # percent to fill (each pill = 1%)
+rows  <- 5
+cols  <- 20
+blue  <- "#2C5080"          # UNC Carolina blue
+gray  <- "#D9DEE3"
+L     <- 0.78               # pill length
+W     <- 0.36               # pill width
+angle <- 45 * pi / 180      # pill tilt
+caption1 <- "Each pill = 1% of the sample"
+caption2 <- "Source: Synthea Massachusetts, random sample of 111 patients"
+out_file <- "waffle_chart_pills.png"
+
+# ---- Shape helpers ----------------------------------------------------------
+# Capsule outline (u along the pill's length, v across), centered on (0, 0)
+capsule_uv <- function(n = 60) {
+  hs <- L / 2 - W / 2                      # half-length of the straight section
+  t1 <- seq(-pi / 2,     pi / 2,     length.out = n)   # right cap
+  t2 <- seq( pi / 2, 3 * pi / 2,     length.out = n)   # left cap
+  data.frame(u = c( hs + W / 2 * cos(t1), -hs + W / 2 * cos(t2)),
+             v = c(      W / 2 * sin(t1),       W / 2 * sin(t2)))
+}
+
+# Thin seam across the middle of the pill
+seam_uv <- data.frame(u = c(-0.02, 0.02, 0.02, -0.02),
+                      v = c(-W / 2, -W / 2, W / 2, W / 2))
+
+# Rotate by `angle`, move to (cx, cy), and optionally cut off everything right
+# of clip_x (used for the partly filled pill)
+place <- function(uv, cx, cy, id, clip_x = Inf) {
+  data.frame(
+    x  = pmin(cx + uv$u * cos(angle) - uv$v * sin(angle), clip_x),
+    y  = cy + uv$u * sin(angle) + uv$v * cos(angle),
+    id = id
+  )
+}
+
+# ---- Grid layout total coverage ------------------------------------------------------------
+idx  <- 0:(rows * cols - 1)
+r    <- idx %/% cols
+c    <- idx %% cols
+cx   <- c + 0.5
+cy   <- rows - 1 - r + 0.5                 # first row at the top
+fill <- pct - idx                          # >= 1 full, between 0 and 1 partial
+
+body <- capsule_uv()
+
+build <- function(uv, keep, clip) {
+  do.call(rbind, lapply(which(keep), function(i)
+    place(uv, cx[i], cy[i], id = i, clip_x = clip[i])))
+}
+
+all_i <- rep(TRUE, length(idx))
+blue_i <- fill > 0
+# Partial pill is cut at the matching fraction of the pill's width
+clip_x <- ifelse(fill >= 1, Inf, (cx - 0.38) + 0.76 * fill)
+
+gray_body <- build(body,   all_i,  rep(Inf, length(idx)))
+gray_seam <- build(seam_uv, all_i, rep(Inf, length(idx)))
+blue_body <- build(body,   blue_i, clip_x)
+blue_seam <- build(seam_uv, blue_i, clip_x)
+
+# ---- Plot -------------------------------------------------------------------
+total_coverage_plot <- ggplot() +
+  geom_polygon(data = gray_body, aes(x, y, group = id), fill = gray) +
+  geom_polygon(data = gray_seam, aes(x, y, group = id), fill = "white") +
+  geom_polygon(data = blue_body, aes(x, y, group = id), fill = blue) +
+  geom_polygon(data = blue_seam, aes(x, y, group = id), fill = "white") +
+  annotate("text", x = cols / 2, y = -0.55, label = caption1,
+           size = 15 / .pt, colour = "#555555") +
+  annotate("text", x = cols / 2, y = -1.05, label = caption2,
+           size = 12 / .pt, colour = "#777777") +
+  coord_fixed(xlim = c(0, cols), ylim = c(-1.35, rows + 0.15), expand = FALSE) +
+  theme_void() +
+  theme(plot.background = element_rect(fill = "white", colour = NA),
+        plot.margin = margin(0, 0, 0, 0))
+
+# 10.5 in wide, height follows the grid's aspect ratio (6.5 units tall / 20 wide)
+ggsave(out_file, total_coverage_plot, width = 10.5, height = 10.5 * 6.5 / cols,
+       dpi = 300, bg = "white")
+total_coverage_plot
+```
