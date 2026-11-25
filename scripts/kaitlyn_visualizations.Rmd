@@ -37,16 +37,23 @@ age_at <- function(birth, date) as.integer(floor(time_length(interval(birth, dat
 band_levels <- c("0–17", "18–34", "35–49", "50–64", "65+")
 to_band <- function(age) cut(age, breaks = c(-Inf, 17, 34, 49, 64, Inf), labels = band_levels)
 
-base_theme <- theme_minimal(base_size = 16) +
-  theme(panel.grid.minor = element_blank(),
-        panel.grid.major.x = element_blank(),
-        plot.title = element_text(face = "bold", size = 17),
-        plot.title.position = "plot")
+base_theme <- theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold", size = 13),
+    plot.title.position = "plot",
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 8),
+    axis.title.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    plot.margin = margin(10, 12, 10, 12)
+  )
 ```
 
 ## Viz 1
 
-```{r}
+```{r, fig.wdith=8, fig.height=7, out.wdith="100%"}
 # ---- Panel A: average number of different medications per patient, by age band
 # Build a patient-by-year-of-age grid so years with zero medications count too
 grid <- pts |>
@@ -89,7 +96,7 @@ p1 <- ggplot(need, aes(band, avg_meds, group = 1)) + shade +
   geom_point(color = "#1F3A5F", size = 5) +
   geom_text(aes(label = number(avg_meds, accuracy = 0.1)),
             vjust = -1.1, size = 6, fontface = "bold", color = "#1F3A5F") +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.40))) +
   labs(title = "Older patients take more medications...",
        x = NULL, y = "Different medications\ntaken in a year") +
   base_theme
