@@ -1,0 +1,608 @@
+```{r}
+# Installing Necessary Packages
+install.packages("tidyverse") # for cleaning, organizing, joining, and visualizing data
+install.packages("janitor") # for cleaning column names
+install.packages("scales") # for formatting percentages and lables
+install.packages("here") # for navigating file paths
+
+# Loading Packages
+library(tidyverse)
+library(janitor)
+library(scales)
+library(here)
+```
+```{r}
+# Importing patient data
+patients <- read_csv(here("data", "patients.csv")) %>%
+  clean_names()
+
+# Importing medication data
+medications <- read_csv(here("data", "medications.csv")) %>%
+  clean_names()
+
+# Importing condition data
+conditions <- read_csv(here("data", "conditions.csv")) %>%
+  clean_names()
+```
+
+```{r}
+# Establishing how many unique patients exist within sample and whether all medication records belong to those patients
+
+# Checking total number of patient records
+nrow(patients)
+
+# Checking number of unique patient IDs
+n_distinct(patients$id)
+
+# Checking for duplicate patient IDs
+patients %>%
+  count(id) %>%
+  filter(n > 1)
+
+# Calculating number of unique patients represented in medications
+n_distinct(medications$patient)
+
+# Calculating number of unique patients represented in conditions
+n_distinct(conditions$patient)
+
+# Calculating number of medication records without a matching patient
+anti_join(
+  medications,
+  patients,
+  by = c("patient" = "id")
+) %>%
+  nrow()
+
+# The result of this confirmed that there are 111 unique patients with no duplicated patient IDs. Every medication record belong to a patient bu there are only 107 patients with records and 4 without. All patients, however, have condition records. 
+```
+
+```{r}
+# Creating waffle chart visualization to show many patients within our sample have medication records 
+
+# Counting patients with and without medication records
+waffle_data <- patients %>%
+  mutate(
+    medication_status = if_else(
+      id %in% medications$patient,
+      "Has medication records",
+      "No medication records"
+    )
+  ) %>%
+  count(medication_status) %>%
+  mutate(
+    percentage = n / sum(n) * 100
+  )
+
+# Checking results
+waffle_data
+
+# Creating one square for each patient
+waffle_squares <- patients %>%
+  mutate(
+    medication_status = if_else(
+      id %in% medications$patient,
+      "Has medication records",
+      "No medication records"
+    )
+  ) %>%
+  arrange(medication_status) %>%
+  mutate(
+    square = row_number(),
+    x = (square - 1) %% 11,
+    y = 10 - ((square - 1) %/% 11)
+  )
+
+# Creating waffle chart
+waffle_chart <- ggplot(waffle_squares, aes(x = x, y = y, fill = medication_status)) +
+  geom_tile(color = "white", linewidth = 0.7) +
+  scale_fill_manual(
+  values = c(
+    "Has medication records" = "#1F4E79",
+    "No medication records" = "#BDBDBD"
+  )
+) +
+  coord_equal() +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(
+    title = "Medication Records Are Present for Nearly All Patients",
+    subtitle = "96.4% of sample patients have at least one medication record",
+    fill = NULL,
+    caption = paste(
+      "Each square represents one patient.",
+      "Source: Synthea, an open-source synthetic patient population simulator."
+    )
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(
+      size = 15, face = "bold", color = "#263238"
+    ),
+    plot.subtitle = element_text(
+      size = 13, color = "#455A64"
+    ),
+    plot.caption = element_text(
+      size = 7, color = "#607D8B", hjust = 0,
+      lineheight = 1.3
+    ),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    plot.margin = margin(20, 30, 20, 30)
+  )
+
+# Saving chart to figures folder within project directory
+ggsave(
+  filename = here("figures", "visualization_1_waffle_chart.png"),
+  plot = waffle_chart,
+  width = 10,
+  height = 7,
+  dpi = 300,
+  bg = "white"
+)
+```
+```{r}
+#Visualizing the distribution of medication counts per patient differ across age groups
+
+# Counting medication records for each patient
+patient_medication_counts <- patients %>%
+  left_join(
+    medications %>%
+      count(patient, name = "medication_count"),
+    by = c("id" = "patient")
+  ) %>%
+  mutate(
+    medication_count = replace_na(medication_count, 0)
+  )
+
+# Checking the results
+patient_medication_counts %>%
+  summarise(
+    total_patients = n(),
+    patients_with_records = sum(medication_count > 0),
+    patients_without_records = sum(medication_count == 0),
+    total_medication_records = sum(medication_count)
+  )
+
+# Calculating patient age and assign age groups
+patient_medication_counts <- patient_medication_counts %>%
+  mutate(
+    age = floor(
+      lubridate::time_length(
+        lubridate::interval(birthdate, as.Date("2026-11-15")),
+        "years"
+      )
+    ),
+    age_group = case_when(
+      age <= 17 ~ "0–17",
+      age <= 34 ~ "18–34",
+      age <= 49 ~ "35–49",
+      age <= 64 ~ "50–64",
+      age >= 65 ~ "65+"
+    )
+  )
+
+# Checking the distribuion
+patient_medication_counts %>%
+  count(age_group)
+
+# Summarizing medication counts within each age group
+patient_medication_counts %>%
+  group_by(age_group) %>%
+  summarise(
+    patients = n(),
+    zero_medications = sum(medication_count == 0),
+    min_medications = min(medication_count),
+    median_medications = median(medication_count),
+    mean_medications = round(mean(medication_count), 1),
+    max_medications = max(medication_count)
+  )
+
+# Defining Categories of Medication Counts
+patient_medication_counts <- patient_medication_counts %>%
+  mutate(
+    medication_category = case_when(
+      medication_count == 0 ~ "0",
+      medication_count <= 5 ~ "1–5",
+      medication_count <= 10 ~ "6–10",
+      medication_count <= 20 ~ "11–20",
+      medication_count > 20 ~ "21+"
+    )
+  )
+
+# Examining distribution across age groups
+patient_medication_counts %>%
+  count(age_group, medication_category) %>%
+  arrange(age_group, medication_category)
+```
+
+```{r}
+# Setting the correct category order
+patient_medication_counts <- patient_medication_counts %>%
+  mutate(
+    age_group = factor(
+      age_group,
+      levels = c("0–17", "18–34", "35–49", "50–64", "65+")
+    ),
+    medication_category = factor(
+      medication_category,
+      levels = c("0", "1–5", "6–10", "11–20", "21+")
+    )
+  )
+
+# Calculating percentages for each age group
+medication_distribution <- patient_medication_counts %>%
+  count(age_group, medication_category) %>%
+  tidyr::complete(
+    age_group,
+    medication_category,
+    fill = list(n = 0)
+  ) %>%
+  group_by(age_group) %>%
+  mutate(
+    percentage = n / sum(n) * 100
+  ) %>%
+  ungroup()
+
+# Checking results
+medication_distribution
+
+
+# Creating the stacked bar chart
+medication_chart <- ggplot(
+  medication_distribution,
+  aes(x = age_group, y = percentage, fill = medication_category)
+) +
+  geom_col(
+    color = "white",
+    linewidth = 0.4,
+    position = position_stack(reverse = TRUE)
+  ) +
+  scale_fill_manual(
+    values = c(
+      "0" = "#E5E7EB",
+      "1–5" = "#C6D5E5",
+      "6–10" = "#8EABC8",
+      "11–20" = "#527A9F",
+      "21+" = "#1F4E79"
+    ),
+    breaks = c("0", "1–5", "6–10", "11–20", "21+"),
+    limits = c("0", "1–5", "6–10", "11–20", "21+")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    breaks = seq(0, 100, 25),
+    expand = c(0, 0)
+  ) +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    title = "Older Age Groups Have a Higher Share of Patients with 21+ Medication Records",
+    subtitle = "Percentage of patients in each age group by total recorded medication count",
+    x = "Patient age group",
+    y = "Percentage of patients",
+    fill = "Medication records per patient",
+    caption = paste(
+      "Each bar represents 100% of patients within an age group.",
+      "Medication records may reflect historical records, not current prescriptions.",
+      "Source: Synthea, an open-source synthetic patient population simulator."
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      size = 14, face = "bold", color = "#263238"
+    ),
+    plot.subtitle = element_text(
+      size = 11, color = "#455A64"
+    ),
+    axis.title = element_text(size = 10, color = "#455A64"),
+    axis.text = element_text(size = 10, color = "#455A64"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 9, face = "bold"),
+    legend.text = element_text(size = 9),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.caption = element_text(
+      size = 8, color = "#607D8B", hjust = 0,
+      lineheight = 1.3
+    ),
+    plot.margin = margin(15, 20, 15, 20)
+  )
+
+medication_chart
+```
+
+```{r}
+summary(medications$start)
+summary(medications$stop)
+
+max(medications$start, na.rm = TRUE)
+
+# Calculating currently active medication records
+reference_date <- as.POSIXct(
+  "2026-10-16 23:59:59",
+  tz = "UTC"
+)
+
+active_medications <- medications %>%
+  filter(
+    start <= reference_date,
+    is.na(stop) | stop > reference_date
+  )
+
+# Checking how many records are currently active
+nrow(active_medications)
+
+# Checking how many unique patients have active medication records
+n_distinct(active_medications$patient)
+
+# Calculating medication counts per patient
+active_patient_counts <- patients %>%
+  left_join(
+    active_medications %>%
+      count(patient, name = "active_medication_count"),
+    by = c("id" = "patient")
+  ) %>%
+  mutate(
+    active_medication_count = replace_na(
+      active_medication_count, 0
+    )
+  )
+
+# Verifying totals
+active_patient_counts %>%
+  summarise(
+    total_patients = n(),
+    patients_with_active_medications =
+      sum(active_medication_count > 0),
+    patients_without_active_medications =
+      sum(active_medication_count == 0),
+    total_active_medication_records =
+      sum(active_medication_count)
+  )
+```
+```{r}
+# Creating medication-count categories
+active_patient_counts <- active_patient_counts %>%
+  mutate(
+    medication_category = case_when(
+      active_medication_count == 0 ~ "0",
+      active_medication_count <= 5 ~ "1–5",
+      active_medication_count <= 10 ~ "6–10",
+      active_medication_count <= 20 ~ "11–20",
+      active_medication_count > 20 ~ "21+"
+    )
+  )
+
+# Count patients in each category
+active_patient_counts %>%
+  count(medication_category) %>%
+  arrange(medication_category)
+```
+```{r}
+# Breaking down active medication count by age
+active_patient_counts <- active_patient_counts %>%
+  mutate(
+    age = floor(
+      lubridate::time_length(
+        lubridate::interval(
+          birthdate,
+          as.Date("2026-10-16")
+        ),
+        "years"
+      )
+    ),
+    age_group = case_when(
+      age <= 17 ~ "0–17",
+      age <= 34 ~ "18–34",
+      age <= 49 ~ "35–49",
+      age <= 64 ~ "50–64",
+      age >= 65 ~ "65+"
+    )
+  )
+
+active_patient_counts %>%
+  count(age_group, medication_category) %>%
+  arrange(age_group, medication_category) %>%
+  print(n = Inf)
+```
+```{r}
+# Updating percentages
+active_distribution <- active_patient_counts %>%
+  mutate(
+    medication_category = factor(
+      medication_category,
+      levels = c("0", "1–5", "6–10", "11–20")
+    ),
+    age_group = factor(
+      age_group,
+      levels = c("0–17", "18–34", "35–49", "50–64", "65+")
+    )
+  ) %>%
+  count(age_group, medication_category) %>%
+  tidyr::complete(
+    age_group,
+    medication_category,
+    fill = list(n = 0)
+  ) %>%
+  group_by(age_group) %>%
+  mutate(
+    percentage = n / sum(n) * 100
+  ) %>%
+  ungroup()
+
+active_distribution
+```
+
+```{r}
+# Creating the stacked bar chart
+active_distribution <- active_distribution %>%
+  mutate(
+    age_label = factor(
+      age_group,
+      levels = c("0–17", "18–34", "35–49", "50–64", "65+"),
+      labels = c(
+        "0–17",
+        "18–34",
+        "35–49",
+        "50–64",
+        "65+"
+      )
+    )
+  )
+
+
+active_medication_chart <- ggplot(
+  active_distribution,
+  aes(
+    x = age_label,
+    y = percentage,
+    fill = medication_category
+  )
+) +
+  geom_col(
+    color = "white",
+    linewidth = 0.5,
+    position = position_stack(reverse = TRUE)
+  ) +
+  scale_fill_manual(
+    values = c(
+      "0" = "#E5E7EB",
+      "1–5" = "#C6D5E5",
+      "6–10" = "#8EABC8",
+      "11–20" = "#1F4E79"
+    ),
+    breaks = c("0", "1–5", "6–10", "11–20")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    breaks = seq(0, 100, 25),
+    expand = c(0, 0)
+  ) +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    title = "Older Patients Have More Active Medication Records",
+    subtitle = "Distribution of active medication records per patient across age groups",
+    x = "Patient age group",
+    y = "Percentage of patients",
+    fill = "Active medication records per patient",
+    caption = paste(
+      "Reference date: October 16, 2026.",
+      "Active records have no recorded stop date or a stop date after the reference date.\nSource: Synthea synthetic patient dataset."
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(
+      size = 14, face = "bold", color = "#263238"
+    ),
+    plot.subtitle = element_text(
+      size = 10, color = "#455A64"
+    ),
+    axis.title = element_text(size = 10, color = "#455A64"),
+    axis.text = element_text(size = 10, color = "#455A64"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 9, face = "bold"),
+    legend.text = element_text(size = 9),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.caption = element_text(
+      size = 8.5, color = "#607D8B", hjust = 0,
+      lineheight = 1.3
+    ),
+    plot.margin = margin(15, 20, 15, 20)
+  )
+
+active_medication_chart
+
+ggsave(
+  filename = here("figures", "visualization_2_active_medications.png"),
+  plot = active_medication_chart,
+  width = 10,
+  height = 7,
+  dpi = 300,
+  bg = "white"
+)
+
+```
+
+```{r}
+# Updating the waffle chart
+active_waffle_squares <- active_patient_counts %>%
+  mutate(
+    medication_status = if_else(
+      active_medication_count > 0,
+      "Has active medication records",
+      "No active medication records"
+    )
+  ) %>%
+  arrange(medication_status) %>%
+  mutate(
+    square = row_number(),
+    x = (square - 1) %% 11,
+    y = 10 - ((square - 1) %/% 11)
+  )
+
+# Verifying patient counts
+active_waffle_squares %>%
+  count(medication_status)
+
+
+active_waffle_chart <- ggplot(
+  active_waffle_squares,
+  aes(x = x, y = y, fill = medication_status)
+) +
+  geom_tile(
+    color = "white",
+    linewidth = 0.7
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Has active medication records" = "#1F4E79",
+      "No active medication records" = "#BDBDBD"
+    )
+  ) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_equal() +
+  labs(
+  title = "61% of Patients Have Active Medication Records",
+  subtitle = "Active records = records started by October 16, 2026,\nwith no recorded end date or an end date after that date.",
+  fill = NULL,
+  caption = paste(
+    "Each square represents one patient.",
+    "Source: Synthea synthetic patient dataset."
+  )
+) +
+  theme_void() +
+  theme(
+    plot.title = element_text(
+      size = 14, face = "bold", color = "#263238"
+    ),
+    plot.subtitle = element_text(
+      size = 9, color = "#455A64"
+    ),
+    legend.position = "bottom",
+    legend.text = element_text(size = 9),
+    plot.caption = element_text(
+      size = 8, color = "#607D8B", hjust = 0,
+      lineheight = 1.3
+    ),
+    plot.margin = margin(15, 20, 15, 20)
+  )
+
+active_waffle_chart
+
+```
+
+```{r}
+# Saving waffle chart
+ggsave(
+  filename = here("figures", "visualization_1_waffle_chart.png"),
+  plot = active_waffle_chart,
+  width = 10,
+  height = 7,
+  dpi = 300,
+  bg = "white"
+)
+```
+
