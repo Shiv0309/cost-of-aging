@@ -1,0 +1,182 @@
+---
+title: "Data 711 Visualizations"
+author: "Kaitlyn Chihaoui"
+date: "2026-11-16"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Setup
+```{r}
+library(tidyverse)
+library(lubridate)
+library(here)
+library(patchwork)
+library(scales)
+
+data_dir <- here("data", "synthea_sample_data_csv_latest")
+ref_date <- as_date("2026-10-16")   # same reference date as your other charts
+
+pts <- read_csv(file.path(data_dir, "patients.csv"), show_col_types = FALSE) |>
+  transmute(PATIENT = Id, BIRTHDATE = as_date(BIRTHDATE), DEATHDATE = as_date(DEATHDATE))
+
+meds <- read_csv(file.path(data_dir, "medications.csv"), show_col_types = FALSE,
+                 col_types = cols(.default = col_guess(),
+                                  START = col_character(), STOP = col_character())) |>
+  mutate(start_date = as_date(str_sub(START, 1, 10)),
+         stop_date  = as_date(str_sub(STOP, 1, 10)),
+         covered    = PAYER_COVERAGE * DISPENSES) |>   # PAYER_COVERAGE is per dispense
+  left_join(pts, by = "PATIENT")
+
+age_at <- function(birth, date) as.integer(floor(time_length(interval(birth, date), "years")))
+
+band_levels <- c("0–17", "18–34", "35–49", "50–64", "65+")
+to_band <- function(age) cut(age, breaks = c(-Inf, 17, 34, 49, 64, Inf), labels = band_levels)
+
+base_theme <- theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold", size = 13),
+    plot.title.position = "plot",
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 8),
+    axis.title.y = element_text(size = 9),
+    axis.title.x = element_text(size = 10),
+    plot.margin = margin(10, 12, 10, 12)
+  )
+```
+
+## Viz 1
+
+```{r, fig.wdith=8, fig.height=7, out.wdith="100%"}
+# ---- Panel A: average number of different medications per patient, by age band
+# Build a patient-by-year-of-age grid so years with zero medications count too
+grid <- pts |>
+  mutate(end_date = pmin(coalesce(DEATHDATE, ref_date), ref_date),
+         last_age = age_at(BIRTHDATE, end_date)) |>
+  mutate(age = map(last_age, ~ 0:.x)) |>
+  unnest(age) |>
+  select(PATIENT, age)
+
+# Count distinct active medications per patient at each age
+med_years <- meds |>
+  mutate(end_date = pmin(coalesce(stop_date, ref_date), ref_date,
+                         coalesce(DEATHDATE, ref_date)),
+         age_from = age_at(BIRTHDATE, start_date),
+         age_to   = age_at(BIRTHDATE, end_date)) |>
+  filter(age_to >= age_from) |>
+  mutate(age = map2(age_from, age_to, seq)) |>
+  unnest(age) |>
+  distinct(PATIENT, age, CODE) |>
+  count(PATIENT, age, name = "n_meds")
+
+need <- grid |>
+  left_join(med_years, by = c("PATIENT", "age")) |>
+  mutate(n_meds = replace_na(n_meds, 0), band = to_band(age)) |>
+  group_by(band) |>
+  summarise(avg_meds = mean(n_meds), .groups = "drop")
+
+# ---- Panel B: share of medication cost paid by insurance, by age at prescription
+support <- meds |>
+  mutate(band = to_band(age_at(BIRTHDATE, start_date))) |>
+  group_by(band) |>
+  summarise(share = sum(covered) / sum(TOTALCOST), .groups = "drop")
+
+# ---- Plots
+shade <- annotate("rect", xmin = 4.5, xmax = 5.5, ymin = -Inf, ymax = Inf,
+                  fill = "#1F3A5F", alpha = 0.08)          # highlights the 65+ group
+
+p1 <- ggplot(need, aes(band, avg_meds, group = 1)) + shade +
+  geom_line(color = "#1F3A5F", linewidth = 1.6) +
+  geom_point(color = "#1F3A5F", size = 5) +
+  geom_text(aes(label = number(avg_meds, accuracy = 0.1)),
+            vjust = -1.1, size = 6, fontface = "bold", color = "#1F3A5F") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.40))) +
+  labs(title = "Older patients take more medications...",
+       x = NULL, y = "Different medications\ntaken in a year") +
+  base_theme
+
+old   <- support$share[support$band == "65+"]
+title2 <- str_wrap(paste0("...and insurance pays more of the bill, but patients 65+ still cover about ",
+                          percent(1 - old, accuracy = 1), " themselves"), width = 58)
+
+p2 <- ggplot(support, aes(band, share, group = 1)) + shade +
+  geom_line(color = "#C8553D", linewidth = 1.6) +
+  geom_point(color = "#C8553D", size = 5) +
+  geom_text(aes(label = percent(share, accuracy = 1)),
+            vjust = -1.1, size = 6, fontface = "bold", color = "#C8553D") +
+  scale_y_continuous(labels = percent, breaks = seq(0, 1, 0.25), limits = c(0, 1.05)) +
+  labs(title = title2, x = "Patient age group", y = "Share of medication\ncost paid by insurance") +
+  base_theme
+
+viz1 <- (p1 / p2) +
+  plot_annotation(
+    caption = paste0("Source: Synthea synthetic patient dataset (Massachusetts sample, ",
+                     n_distinct(pts$PATIENT), " patients). Shaded area = age 65 and older."),
+    theme = theme(plot.caption = element_text(size = 11, color = "grey40")))
+
+viz1
+
+ggsave(here("viz1_need_vs_coverage.png"), viz1, width = 10, height = 9, dpi = 300, bg = "white")
+```
+
+## Visualization 2
+
+```{r}
+min_rx  <- 5   # minimum prescriptions in each age group
+min_pts <- 2   # minimum different patients in each age group
+
+dumb <- meds |>
+  mutate(group = if_else(age_at(BIRTHDATE, start_date) >= 65, "older", "younger")) |>
+  group_by(DESCRIPTION, group) |>
+  summarise(share = sum(covered) / sum(TOTALCOST),
+            n_rx = n(), n_pts = n_distinct(PATIENT), .groups = "drop") |>
+  pivot_wider(names_from = group, values_from = c(share, n_rx, n_pts)) |>
+  filter(n_rx_older >= min_rx, n_rx_younger >= min_rx,
+         n_pts_older >= min_pts, n_pts_younger >= min_pts) |>     # drops thin comparisons
+  slice_max(n_rx_older, n = 10, with_ties = FALSE) |>
+  mutate(gap  = share_older - share_younger,
+         name = str_squish(str_remove(DESCRIPTION, " (Oral|Injectable|Ophthalmic|Topical|Vaginal)\\b.*$")),
+         name = paste0(str_to_upper(str_sub(name, 1, 1)), str_sub(name, 2)),
+         drug = fct_reorder(name, gap))                           # biggest gap on top
+
+top      <- slice_max(dumb, gap, n = 1, with_ties = FALSE)
+y_label  <- nrow(dumb) + 0.8
+col_old  <- "#1F3A5F"; col_young <- "#E69F00"
+
+viz2 <- ggplot(dumb, aes(y = drug)) +
+  geom_segment(aes(x = share_younger, xend = share_older, yend = drug),
+               color = "grey70", linewidth = 2) +
+  geom_point(aes(x = share_younger), color = col_young, size = 6) +
+  geom_point(aes(x = share_older),   color = col_old,   size = 6) +
+  geom_text(aes(x = share_younger, label = percent(share_younger, accuracy = 1),
+                hjust = if_else(share_younger <= share_older, 1.5, -0.5)),
+            color = "#B57700", size = 5) +
+  geom_text(aes(x = share_older, label = percent(share_older, accuracy = 1),
+                hjust = if_else(share_younger <= share_older, -0.5, 1.5)),
+            color = col_old, size = 5, fontface = "bold") +
+  annotate("text", x = top$share_younger, y = y_label, label = "Under 65",
+           color = "#B57700", fontface = "bold", size = 5.5) +
+  annotate("text", x = top$share_older, y = y_label, label = "65 and older",
+           color = col_old, fontface = "bold", size = 5.5) +
+  scale_x_continuous(labels = percent, breaks = seq(0, 1, 0.25), limits = c(-0.05, 1.05)) +
+  scale_y_discrete(expand = expansion(add = c(0.6, 1.3))) +
+  labs(title = "The same medicines, a different share covered by insurance",
+       subtitle = "Share of each drug's cost paid by insurance, ages 65+ vs. under 65",
+       x = "Share of cost paid by insurance", y = NULL,
+       caption = paste0("Source: Synthea synthetic patient dataset (Massachusetts sample). ",
+                        "Drugs shown have at least ", min_rx, " prescriptions in each age group.")) +
+  base_theme +
+  theme(panel.grid.major.y = element_blank(),
+        axis.text.y = element_text(size = 15),
+        plot.caption = element_text(size = 11, color = "grey40"))
+
+viz2
+ggsave(here("viz2_drug_coverage_by_age.png"), viz2, width = 10, height = 6.5, dpi = 300, bg = "white")
+```
+
