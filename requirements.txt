@@ -1,0 +1,4 @@
+# Python dependencies for The Cost of Aging
+# Install with: pip install -r requirements.txt
+
+matplotlib
